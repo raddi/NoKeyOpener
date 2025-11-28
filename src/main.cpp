@@ -22,11 +22,12 @@ const char* MQTT_PASS     = "MQTT_PASS";
 const char* TOPIC_SPEAKER_MUTE = "wohnung/sprechanlage/SpeakerMute";  // erwartet "true"/"false"
 const char* TOPIC_RING_TO_OPEN = "wohnung/sprechanlage/RingToOpen";   // erwartet "true"/"false"
 const char* TOPIC_RINGING      = "wohnung/sprechanlage/Ringing";      // sendet "true"/"false"
+const char* TOPIC_OPENINGDOOR  = "wohnung/sprechanlage/OpeningDoor";   // sendet "true"/"false"
 
 // Pins (anpassen, falls nötig)
-const int PIN_RING_IN          = 14;  // Eingang von der Klingel (potentialfreies Relais)
-const int PIN_OPEN_DOOR_RELAY  = 12;  // Relais für Türöffner
-const int PIN_SPEAKER_RELAY    = 13;  // Relais für Lautsprecher stumm/aktiv
+const int PIN_RING_IN          = D6;  // Eingang von der Klingel (potentialfreies Relais)
+const int PIN_OPEN_DOOR_RELAY  = D5;  // Relais für Türöffner
+const int PIN_SPEAKER_RELAY    = D7;  // Relais für Lautsprecher stumm/aktiv
 
 // Pegel-Definitionen
 // -> RingIn aktiv LOW (Relaiskontakt nach GND)
@@ -93,13 +94,25 @@ void updateSpeakerRelay() {
 void startDoorRelayPulse() {
   doorRelayActive = true;
   doorRelayStartTime = millis();
+
+  // Relais einschalten
   digitalWrite(PIN_OPEN_DOOR_RELAY, RELAY_ACTIVE_LEVEL);
+
+  // MQTT senden
+  mqttClient.publish(TOPIC_OPENINGDOOR, "true", true);
+
   Serial.println("Türöffner-Relais EIN (RingToOpen aktiv + Klingel betätigt)");
 }
 
 void stopDoorRelayPulse() {
   doorRelayActive = false;
+
+  // Relais aus
   digitalWrite(PIN_OPEN_DOOR_RELAY, !RELAY_ACTIVE_LEVEL);
+
+  // MQTT senden
+  mqttClient.publish(TOPIC_OPENINGDOOR, "false", true);
+
   Serial.println("Türöffner-Relais AUS (Zeit abgelaufen)");
 }
 
