@@ -8,11 +8,15 @@
 
 // WLAN
 const char* WIFI_SSID     = "SSID";
-const char* WIFI_PASSWORD = "WLAN_PASSWORT";
+const char* WIFI_PASSWORD = "WIFIPASSWORD";
 
 // MQTT
 const char* MQTT_BROKER   = "192.168.1.100";   // <- Deine Broker-IP oder Hostname
 const uint16_t MQTT_PORT  = 1883;
+
+// MQTT Auth
+const char* MQTT_USER     = "MQTT_USER";
+const char* MQTT_PASS     = "MQTT_PASS";
 
 // Topics (alle true/false)
 const char* TOPIC_SPEAKER_MUTE = "wohnung/sprechanlage/SpeakerMute";  // erwartet "true"/"false"
@@ -147,10 +151,11 @@ void connectToMQTT() {
     Serial.print(":");
     Serial.println(MQTT_PORT);
 
-    String clientId = "ESP32-DoorOpener-";
+    String clientId = "ESP8266-DoorOpener-";
     clientId += String(random(0xffff), HEX);
 
-    if (mqttClient.connect(clientId.c_str())) {
+    // -> hier jetzt MIT Username/Passwort
+    if (mqttClient.connect(clientId.c_str(), MQTT_USER, MQTT_PASS)) {
       Serial.println("MQTT verbunden");
 
       mqttClient.subscribe(TOPIC_SPEAKER_MUTE);
