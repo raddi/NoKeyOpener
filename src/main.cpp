@@ -22,21 +22,28 @@ const char* MQTT_PASS     = "MQTT_PASS";
 const char* TOPIC_SPEAKER_MUTE = "wohnung/sprechanlage/SpeakerMute";  // erwartet "true"/"false"
 const char* TOPIC_RING_TO_OPEN = "wohnung/sprechanlage/RingToOpen";   // erwartet "true"/"false"
 const char* TOPIC_RINGING      = "wohnung/sprechanlage/Ringing";      // sendet "true"/"false"
-const char* TOPIC_OPENINGDOOR  = "wohnung/sprechanlage/OpeningDoor";   // sendet "true"/"false"
+const char* TOPIC_OPENINGDOOR  = "wohnung/sprechanlage/OpeningDoor";  // sendet "true"/"false"
 
 // Pins (anpassen, falls nötig)
-const int PIN_RING_IN          = D6;  // Eingang von der Klingel (potentialfreies Relais)
-const int PIN_OPEN_DOOR_RELAY  = D5;  // Relais für Türöffner
+const int PIN_RING_IN          = D5;  // Eingang von der Klingel (potentialfreies Relais)
+const int PIN_OPEN_DOOR_RELAY  = D6;  // Relais für Türöffner
 const int PIN_SPEAKER_RELAY    = D7;  // Relais für Lautsprecher stumm/aktiv
 
 // Pegel-Definitionen
 // -> RingIn aktiv LOW (Relaiskontakt nach GND)
 // -> Relais aktiv LOW (Standard-Relaisboard)
 const int RING_ACTIVE_LEVEL   = LOW; 
-const int RELAY_ACTIVE_LEVEL  = LOW; // LOW = Relais an
+const int RELAY_ACTIVE_LEVEL  = LOW;
 
 // Türöffner-Dauer (ms)
-const unsigned long DOOR_OPEN_DURATION = 5000UL; // 5 Sekunden
+const unsigned long DOOR_OPEN_DURATION = 5000UL; // Beispiel: 5 Sekunden Öffnungsdauer
+// definierbarer Delay (ms)
+const unsigned long DOOR_OPEN_DELAY = 300;       // Beispiel: 300 ms Verzögerung
+
+unsigned long doorDelayStart = 0;
+bool waitingForDelayedOpen = false;
+
+
 
 // ----------------------------
 // Globale Variablen
@@ -167,7 +174,6 @@ void connectToMQTT() {
     String clientId = "ESP8266-DoorOpener-";
     clientId += String(random(0xffff), HEX);
 
-    // -> hier jetzt MIT Username/Passwort
     if (mqttClient.connect(clientId.c_str(), MQTT_USER, MQTT_PASS)) {
       Serial.println("MQTT verbunden");
 
@@ -232,15 +238,17 @@ void loop() {
   int pinLevel = digitalRead(PIN_RING_IN);
   currentRingState = (pinLevel == RING_ACTIVE_LEVEL);
 
-  // 1) Ringing-Topic bei Änderungen aktualisieren
+  // Ringing-Topic bei Änderungen aktualisieren
   if (currentRingState != lastRingState) {
     publishRingingState(currentRingState);
 
-    // 2) Türöffner nur auf steigende "Klingel-Flanke"
-    //    (Übergang von NICHT klingeln -> klingeln)
+    // Türöffner nur auf steigende "Klingel-Flanke"
+    // (Übergang von NICHT klingeln -> klingeln)
     if (currentRingState == true) {
       if (ringToOpenEnabled) {
-        startDoorRelayPulse();
+        waitingForDelayedOpen = true;
+        doorDelayStart = millis();
+        Serial.println("Tür öffnen");
       } else {
         Serial.println("Es klingelt, aber RingToOpen ist deaktiviert.");
       }
@@ -249,7 +257,16 @@ void loop() {
     lastRingState = currentRingState;
   }
 
-  // 3) Türöffner-Zeitsteuerung
+  // Verzögerter Türöffner
+  if (waitingForDelayedOpen) {
+    // Wenn Delay abgelaufen → Türöffner starten
+    if (millis() - doorDelayStart >= DOOR_OPEN_DELAY) {
+      waitingForDelayedOpen = false;
+      startDoorRelayPulse();
+    }
+  }
+
+  // Türöffner-Zeitsteuerung
   if (doorRelayActive) {
     unsigned long now = millis();
     if (now - doorRelayStartTime >= DOOR_OPEN_DURATION) {
