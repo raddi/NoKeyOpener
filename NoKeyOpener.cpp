@@ -1,4 +1,5 @@
-#include <WiFi.h>
+#include <Arduino.h>
+#include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 
 // ----------------------------
@@ -19,9 +20,9 @@ const char* TOPIC_RING_TO_OPEN = "wohnung/sprechanlage/RingToOpen";   // erwarte
 const char* TOPIC_RINGING      = "wohnung/sprechanlage/Ringing";      // sendet "true"/"false"
 
 // Pins (anpassen, falls nötig)
-const int PIN_RING_IN          = 32;  // Eingang von der Klingel (potentialfreies Relais)
-const int PIN_OPEN_DOOR_RELAY  = 25;  // Relais für Türöffner
-const int PIN_SPEAKER_RELAY    = 26;  // Relais für Lautsprecher stumm/aktiv
+const int PIN_RING_IN          = 14;  // Eingang von der Klingel (potentialfreies Relais)
+const int PIN_OPEN_DOOR_RELAY  = 12;  // Relais für Türöffner
+const int PIN_SPEAKER_RELAY    = 13;  // Relais für Lautsprecher stumm/aktiv
 
 // Pegel-Definitionen
 // -> RingIn aktiv LOW (Relaiskontakt nach GND)
