@@ -14,13 +14,13 @@ const char* MQTT_BROKER   = "192.168.1.100";
 const uint16_t MQTT_PORT  = 1883;
 
 // Topics (alle true/false)
-const char* TOPIC_SPEAKER_MUTE = "wohnung/sprechanlage/SpeakerMute";
-const char* TOPIC_RING_TO_OPEN = "wohnung/sprechanlage/RingToOpen";
-const char* TOPIC_RINGING      = "wohnung/sprechanlage/Ringing";
+const char* TOPIC_SPEAKER_MUTE  = "wohnung/sprechanlage/SpeakerMute";
+const char* TOPIC_RING_TO_OPEN  = "wohnung/sprechanlage/RingToOpen";
+const char* TOPIC_RINGING       = "wohnung/sprechanlage/Ringing";
+const char* TOPIC_OPENING_DOOR  = "wohnung/sprechanlage/OpeningDoor";
 
-// Pins Gateway-ESP (Relais z. B. an der Inneneinheit)
-const int PIN_SPEAKER_RELAY    = 26;
-const int RELAY_ACTIVE_LEVEL   = LOW; // wie bei dir: LOW = Relais an
+const int PIN_SPEAKER_RELAY    = 26;    // optional: Relais im Gateway
+const int RELAY_ACTIVE_LEVEL   = LOW;   // LOW = Relais an
 
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
@@ -29,10 +29,10 @@ PubSubClient mqttClient(espClient);
 // ESP-NOW
 // ----------------------------
 
-// MAC des Door-ESP (anpassen!)
-uint8_t doorMac[] = { 0x24, 0x6F, 0x28, 0xAA, 0xBB, 0xCC };
+// MAC des Door-ESP (ANPASSEN!)
+uint8_t doorMac[] = { 0xC8, 0x2E, 0x18, 0xAA, 0xBB, 0xCC };
 
-// muss mit Door-ESP Struct übereinstimmen:
+// Structs (müssen identisch zu Door-ESP sein)
 typedef struct {
   bool ringing;
   bool doorActive;
@@ -40,6 +40,7 @@ typedef struct {
 
 typedef struct {
   bool triggerDoor;
+  bool speakerMuted;
 } GatewayToDoorMsg;
 
 esp_now_peer_info_t peerInfo;
@@ -48,15 +49,27 @@ esp_now_peer_info_t peerInfo;
 // Zustände
 // ----------------------------
 
-bool ringToOpenEnabled = false;
-bool speakerMuted      = false;
+bool ringToOpenEnabled         = false;
+bool speakerMuted              = false;
 
-bool lastRingStateFromDoor = false;
-bool currentRingStateFromDoor = false;
+bool lastRingStateFromDoor     = false;
+bool currentRingStateFromDoor  = false;
+
+bool lastDoorActiveFromDoor    = false;
+bool currentDoorActiveFromDoor = false;
 
 // ----------------------------
 // Helper: MQTT
 // ----------------------------
+
+void publishBool(const char* topic, bool value) {
+  const char* payload = value ? "true" : "false";
+  mqttClient.publish(topic, payload, true);
+  Serial.print("Gateway: MQTT publish ");
+  Serial.print(topic);
+  Serial.print(" = ");
+  Serial.println(payload);
+}
 
 void connectToWiFi() {
   Serial.print("Gateway: Verbinde mit WLAN: ");
@@ -75,24 +88,30 @@ void connectToWiFi() {
   Serial.println(WiFi.localIP());
 }
 
-void publishRingingState(bool ringing) {
-  const char* payload = ringing ? "true" : "false";
-  Serial.print("Gateway: MQTT publish Ringing = ");
-  Serial.println(payload);
-  mqttClient.publish(TOPIC_RINGING, payload, true); // retained
-}
-
 void updateSpeakerRelay() {
   digitalWrite(PIN_SPEAKER_RELAY, speakerMuted ? RELAY_ACTIVE_LEVEL : !RELAY_ACTIVE_LEVEL);
-  Serial.print("Gateway: SpeakerRelais: ");
-  Serial.println(speakerMuted ? "MUTE (Relais an)" : "NORMAL (Relais aus)");
+  Serial.print("Gateway: SpeakerRelais (lokal): ");
+  Serial.println(speakerMuted ? "MUTE (an)" : "NORMAL (aus)");
+}
+
+// sendet aktuellen `speakerMuted` und optional TriggerDoor
+void sendStateToDoor(bool triggerDoor) {
+  GatewayToDoorMsg msg;
+  msg.triggerDoor  = triggerDoor;
+  msg.speakerMuted = speakerMuted;
+
+  esp_err_t result = esp_now_send(doorMac, (uint8_t*)&msg, sizeof(msg));
+  Serial.print("Gateway: ESP-NOW -> Door: triggerDoor=");
+  Serial.print(triggerDoor ? "true" : "false");
+  Serial.print(", speakerMuted=");
+  Serial.print(speakerMuted ? "true" : "false");
+  Serial.print(" => result=");
+  Serial.println(result == ESP_OK ? "OK" : "FEHLER");
 }
 
 void sendOpenDoorCommand() {
-  GatewayToDoorMsg msg;
-  msg.triggerDoor = true;
-  esp_now_send(doorMac, (uint8_t*)&msg, sizeof(msg));
-  Serial.println("Gateway: ESP-NOW -> Door: triggerDoor = true");
+  // Tür öffnen + SpeakerMute-Status mitsenden
+  sendStateToDoor(true);
 }
 
 // MQTT Callback
@@ -115,6 +134,8 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   if (String(topic) == TOPIC_SPEAKER_MUTE) {
     speakerMuted = value;
     updateSpeakerRelay();
+    // neuen SpeakerMute-Status an Door schicken (ohne TriggerDoor)
+    sendStateToDoor(false);
   } 
   else if (String(topic) == TOPIC_RING_TO_OPEN) {
     ringToOpenEnabled = value;
@@ -143,8 +164,9 @@ void connectToMQTT() {
       Serial.println(TOPIC_SPEAKER_MUTE);
       Serial.println(TOPIC_RING_TO_OPEN);
 
-      // Startzustand publizieren
-      publishRingingState(currentRingStateFromDoor);
+      // Anfangszustände publizieren
+      publishBool(TOPIC_RINGING, currentRingStateFromDoor);
+      publishBool(TOPIC_OPENING_DOOR, currentDoorActiveFromDoor);
       updateSpeakerRelay();
     } else {
       Serial.print("Gateway: MQTT-Verbindung fehlgeschlagen, rc=");
@@ -159,7 +181,6 @@ void connectToMQTT() {
 // ESP-NOW Callbacks
 // ----------------------------
 
-// Empfang von Door-ESP
 void onDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   Serial.println("Gateway: ESP-NOW Daten von Door empfangen");
 
@@ -167,15 +188,18 @@ void onDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
     DoorToGatewayMsg msg;
     memcpy(&msg, incomingData, sizeof(msg));
 
-    currentRingStateFromDoor = msg.ringing;
-    Serial.print("Gateway: Ringing vom Door-ESP = ");
-    Serial.println(currentRingStateFromDoor ? "true" : "false");
+    currentRingStateFromDoor  = msg.ringing;
+    currentDoorActiveFromDoor = msg.doorActive;
 
-    // MQTT nur bei Änderungen
+    Serial.print("Gateway: Door -> ringing=");
+    Serial.print(currentRingStateFromDoor ? "true" : "false");
+    Serial.print(", doorActive=");
+    Serial.println(currentDoorActiveFromDoor ? "true" : "false");
+
+    // Ringing Änderungen -> MQTT + ggf. Türöffnung
     if (currentRingStateFromDoor != lastRingStateFromDoor) {
-      publishRingingState(currentRingStateFromDoor);
+      publishBool(TOPIC_RINGING, currentRingStateFromDoor);
 
-      // RingToOpen-Logik
       if (currentRingStateFromDoor == true) {
         if (ringToOpenEnabled) {
           Serial.println("Gateway: RingToOpen aktiv -> Türöffnung an Door senden");
@@ -186,6 +210,12 @@ void onDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
       }
 
       lastRingStateFromDoor = currentRingStateFromDoor;
+    }
+
+    // DoorActive Änderungen -> OpeningDoor Topic
+    if (currentDoorActiveFromDoor != lastDoorActiveFromDoor) {
+      publishBool(TOPIC_OPENING_DOOR, currentDoorActiveFromDoor);
+      lastDoorActiveFromDoor = currentDoorActiveFromDoor;
     }
 
   } else {
@@ -211,7 +241,6 @@ void setup() {
 
   connectToWiFi();
 
-  // ESP-NOW init
   if (esp_now_init() != ESP_OK) {
     Serial.println("Gateway: ESP-NOW Init fehlgeschlagen!");
     return;
@@ -220,7 +249,7 @@ void setup() {
   esp_now_register_send_cb(onDataSent);
   esp_now_register_recv_cb(onDataRecv);
 
-  // Door-ESP als Peer hinzufügen
+  memset(&peerInfo, 0, sizeof(peerInfo));
   memcpy(peerInfo.peer_addr, doorMac, 6);
   peerInfo.channel = 0;
   peerInfo.encrypt = false;
