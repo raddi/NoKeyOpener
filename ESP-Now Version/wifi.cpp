@@ -204,7 +204,7 @@ void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 
 void setup() {
   Serial.begin(115200);
-  delay(1000);
+  delay(500);
 
   pinMode(PIN_SPEAKER_RELAY, OUTPUT);
   digitalWrite(PIN_SPEAKER_RELAY, !RELAY_ACTIVE_LEVEL);
@@ -236,8 +236,15 @@ void setup() {
   connectToMQTT();
 
   // Anfangszustände
-  publishRingingState(currentRingStateFromDoor);
+  publishBool(TOPIC_RINGING, currentRingStateFromDoor);
+  publishBool(TOPIC_OPENING_DOOR, currentDoorActiveFromDoor);
+
+  // Fail-Safe: Nach Boot Mute standardmäßig AUS
+  speakerMuted = false;
   updateSpeakerRelay();
+  sendStateToDoor(false);   // triggerDoor = false, speakerMuted = false
+
+  Serial.println("Gateway: Fail-Safe -> SpeakerMute standardmäßig AUS nach Boot.");
 }
 
 void loop() {
